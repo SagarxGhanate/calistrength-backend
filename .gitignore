@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+firebase-service-account.json
+*.db
+.DS_Store
+alembic/versions/
