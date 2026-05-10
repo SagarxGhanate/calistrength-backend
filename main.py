@@ -1,7 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.core.config import get_settings
+from app.core.deps import get_db
 from app.database import Base, engine
 
 # ── Import ALL models so SQLAlchemy knows about them ─────────────────────────
@@ -59,5 +62,10 @@ def on_startup():
 
 
 @app.get("/")
-def health_check():
-    return {"status": "ok", "app": "CaliStrength API", "version": "1.0.0"}
+def health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        db_status = "disconnected"
+    return {"status": "ok", "app": "CaliStrength API", "version": "1.0.0", "database": db_status}
