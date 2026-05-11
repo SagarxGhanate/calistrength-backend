@@ -249,7 +249,7 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "gender":        ob.gender if ob else None,
         "age":           ob.age if ob else None,
         "height_cm":     ob.height_cm if ob else None,
-        "target_days":   ob.target_days if ob else None,
+        "target_days":   ob.target_days if ob else 30,
         # Settings
         "rest_time":     settings.rest_time if settings else 30,
         "theme":         settings.theme if settings else "dark",
@@ -327,3 +327,59 @@ def update_settings(
 
     db.commit()
     return {"message": "Settings updated successfully"}
+
+
+# ── ROUTE 7: Reset app / start new journey ─────────────────────────────────────
+
+class ResetAppRequest(BaseModel):
+    carry_over_weight: Optional[float] = None
+
+
+@router.post("/reset")
+def reset_app(
+    body: ResetAppRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete all user progress data (workouts, weight, PRs, daily logs, skills)
+    but keep the user account and onboarding data intact.
+    Optionally seeds a new Day 1 weight entry from the previous journey's
+    last recorded weight.
+    """
+    import datetime
+    from app.models.progress import WeightLog, DailyLog, PersonalRecord
+    from app.models.workout import WorkoutSession, SessionExercise
+    from app.models.skill import UserSkill
+
+    uid = current_user.id
+
+    # Delete session exercises first (FK constraint)
+    session_ids = [s.id for s in db.query(WorkoutSession.id).filter(WorkoutSession.user_id == uid).all()]
+    if session_ids:
+        db.query(SessionExercise).filter(SessionExercise.session_id.in_(session_ids)).delete(synchronize_session=False)
+
+    # Delete main tables
+    db.query(WorkoutSession).filter(WorkoutSession.user_id == uid).delete(synchronize_session=False)
+    db.query(WeightLog).filter(WeightLog.user_id == uid).delete(synchronize_session=False)
+    db.query(PersonalRecord).filter(PersonalRecord.user_id == uid).delete(synchronize_session=False)
+    db.query(DailyLog).filter(DailyLog.user_id == uid).delete(synchronize_session=False)
+    db.query(UserSkill).filter(UserSkill.user_id == uid).delete(synchronize_session=False)
+
+    # Reset onboarding start_date to today
+    ob = current_user.onboarding
+    if ob:
+        ob.start_date = datetime.date.today().isoformat()
+
+    # Carry over last weight as Day 1 entry
+    if body.carry_over_weight and body.carry_over_weight > 0:
+        new_log = WeightLog(
+            user_id=uid,
+            date=datetime.date.today().isoformat(),
+            weight_kg=body.carry_over_weight,
+        )
+        db.add(new_log)
+
+    db.commit()
+    return {"message": "App reset successful. New journey started!"}
+

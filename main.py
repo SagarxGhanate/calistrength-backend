@@ -59,7 +59,26 @@ app.include_router(skills.router)
 @app.on_event("startup")
 def on_startup():
     seed_skills()
+    # Start background heartbeat to keep Aiven MySQL alive
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(_db_heartbeat())
 
+
+async def _db_heartbeat():
+    """Ping MySQL every 4 minutes to prevent Aiven free-tier from sleeping."""
+    import asyncio
+    while True:
+        try:
+            db = SessionLocal()
+            db.execute(text("SELECT 1"))
+            db.close()
+        except Exception as e:
+            print(f"[heartbeat] DB ping failed: {e}")
+        await asyncio.sleep(240)  # 4 minutes
+
+
+# ── Health / Monitoring endpoints (for UptimeRobot) ──────────────────────────
 
 @app.get("/")
 def health_check(db: Session = Depends(get_db)):
@@ -69,3 +88,30 @@ def health_check(db: Session = Depends(get_db)):
     except Exception:
         db_status = "disconnected"
     return {"status": "ok", "app": "CaliStrength API", "version": "1.0.0", "database": db_status}
+
+
+@app.get("/ping")
+def ping():
+    """Lightweight endpoint for UptimeRobot — no DB dependency."""
+    return {"status": "ok"}
+
+
+@app.get("/health")
+def detailed_health(db: Session = Depends(get_db)):
+    """Detailed health check — use this for UptimeRobot HTTP monitor."""
+    import time
+    try:
+        start = time.time()
+        db.execute(text("SELECT 1"))
+        db_latency_ms = round((time.time() - start) * 1000, 1)
+        db_status = "connected"
+    except Exception as e:
+        db_latency_ms = -1
+        db_status = f"error: {str(e)}"
+    return {
+        "status": "ok" if db_status == "connected" else "degraded",
+        "app": "CaliStrength API",
+        "version": "1.0.0",
+        "database": db_status,
+        "db_latency_ms": db_latency_ms,
+    }
